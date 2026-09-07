@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Layar Absensi — Panitia</title>
+<link rel="stylesheet" href="/css/style.css">
+<script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+  <div class="wrap" id="area-buat-sesi">
+    <div class="kop"><span class="titik"></span><h1>Mulai Sesi Ibadah</h1></div>
+    <div class="kartu">
+      <label for="nama_sesi">Nama sesi</label>
+      <input type="text" id="nama_sesi" placeholder="Misal: Ibadah Minggu, 7 Sept 2026">
+      <label class="kecil" style="margin-bottom:10px;">
+        <input type="checkbox" id="pakai_lokasi" style="width:auto;display:inline;margin-right:6px;">
+        Catat lokasi gedung sebagai acuan (opsional, untuk penanda tambahan)
+      </label>
+      <button class="btn-utama" id="btn-mulai">Mulai Sesi & Tampilkan QR</button>
+      <p class="pesan error" id="pesan-error" style="display:none;"></p>
+    </div>
+  </div>
+
+  <div class="wrap" id="area-qr" style="display:none;">
+    <div class="kop"><span class="titik"></span><h1 id="judul-sesi">Sesi Ibadah</h1></div>
+    <div class="qr-panggung">
+      <div id="qr-canvas"></div>
+      <div class="hitung-mundur">QR berganti tiap <strong>5 detik</strong></div>
+      <div class="bar-waktu"><div class="bar-waktu-isi" id="bar-isi"></div></div>
+    </div>
+    <p class="kecil center" style="margin-top:16px;">Jamaah scan kode ini dari <strong>/absen</strong> di HP masing-masing.</p>
+    <p class="center" style="margin-top:10px;"><span id="jumlah-hadir">0</span> orang sudah tercatat hadir</p>
+    <button class="btn-luar" id="btn-tutup" style="margin-top:10px;">Tutup Sesi</button>
+    <p class="center" style="margin-top:14px;"><a href="#" id="link-laporan" class="kecil">Lihat laporan lengkap →</a></p>
+  </div>
+
+<script>
+const socket = io();
+let sesiId = null;
+let jumlahHadir = 0;
+let countdownTimer = null;
+
+document.getElementById('btn-mulai').addEventListener('click', async () => {
+  const nama_sesi = document.getElementById('nama_sesi').value.trim();
+  const errEl = document.getElementById('pesan-error');
+  errEl.style.display = 'none';
+  if (!nama_sesi) {
+    errEl.textContent = 'Nama sesi wajib diisi.';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  const payload = { nama_sesi };
+
+  const lanjut = () => {
+    fetch('/api/sesi', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    .then(r => r.json())
+    .then(data => {
+      sesiId = data.id;
+      document.getElementById('area-buat-sesi').style.display = 'none';
+      document.getElementById('area-qr').style.display = 'block';
+      document.getElementById('judul-sesi').textContent = data.nama_sesi;
+      document.getElementById('link-laporan').href = '/laporan.html?sesi=' + sesiId;
+      socket.emit('join-sesi', sesiId);
+    });
+  };
+
+  if (document.getElementById('pakai_lokasi').checked && navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        payload.lokasi_lat = pos.coords.latitude;
+        payload.lokasi_lng = pos.coords.longitude;
+        lanjut();
+      },
+      () => lanjut() // kalau gagal ambil lokasi, tetap lanjut tanpa lokasi
+    );
+  } else {
+    lanjut();
+  }
+});
+
+document.getElementById('btn-tutup').addEventListener('click', () => {
+  if (!sesiId) return;
+  if (!confirm('Tutup sesi ini? QR akan berhenti berlaku.')) return;
+  fetch(`/api/sesi/${sesiId}/tutup`, { method: 'POST' }).then(() => {
+    location.reload();
+  });
+});
+
+function mulaiCountdownBar() {
+  clearInterval(countdownTimer);
+  const durasi = 5000;
+  const mulai = Date.now();
+  const bar = document.getElementById('bar-isi');
+  countdownTimer = setInterval(() => {
+    const sisa = Math.max(0, durasi - (Date.now() - mulai));
+    bar.style.width = (sisa / durasi * 100) + '%';
+  }, 100);
+}
+
+socket.on('qr-baru', ({ dataUrl }) => {
+  document.getElementById('qr-canvas').innerHTML = `<img src="${dataUrl}" width="260" height="260" alt="QR Absen">`;
+  mulaiCountdownBar();
+});
+
+socket.on('absen-baru', () => {
+  jumlahHadir++;
+  document.getElementById('jumlah-hadir').textContent = jumlahHadir;
+});
+
+socket.on('sesi-selesai', () => {
+  alert('Sesi telah ditutup.');
+  location.reload();
+});
+</script>
+</body>
+</html>

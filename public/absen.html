@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Absen Kehadiran</title>
+<link rel="stylesheet" href="/css/style.css">
+<script src="/js/html5-qrcode.min.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <div class="kop"><span class="titik"></span><h1>Absen Kehadiran</h1></div>
+
+  <div id="langkah-scan">
+    <p class="kecil" style="margin-bottom:14px;">Arahkan kamera ke QR yang tampil di layar depan.</p>
+    <div class="kartu" style="padding:8px;">
+      <div id="pembaca-qr"></div>
+    </div>
+    <p class="pesan error" id="pesan-scan" style="display:none;"></p>
+  </div>
+
+  <div id="langkah-nama" style="display:none;">
+    <div class="pesan sukses">QR terverifikasi. Silakan cari nama Anda.</div>
+    <div class="kartu">
+      <label for="cari-nama">Nama</label>
+      <input type="text" id="cari-nama" placeholder="Ketik nama Anda...">
+      <div class="daftar-nama" id="daftar-nama"></div>
+      <p class="kecil" id="belum-terdaftar" style="display:none;">
+        Nama tidak ditemukan? <a href="#" id="link-daftar-baru">Daftar sebagai jamaah baru</a>
+      </p>
+      <button class="btn-utama" id="btn-absen" disabled>Absen Sekarang</button>
+      <p class="pesan error" id="pesan-absen" style="display:none;"></p>
+    </div>
+  </div>
+
+  <div id="langkah-daftar-baru" style="display:none;">
+    <div class="kartu">
+      <label for="nama-baru">Nama lengkap</label>
+      <input type="text" id="nama-baru" placeholder="Nama lengkap">
+      <label for="hp-baru">No. HP (opsional)</label>
+      <input type="tel" id="hp-baru" placeholder="08xxxxxxxxxx">
+      <button class="btn-utama" id="btn-simpan-baru">Simpan & Lanjutkan Absen</button>
+    </div>
+  </div>
+
+  <div id="langkah-selesai" style="display:none;">
+    <div class="kartu center">
+      <h2 id="nama-berhasil"></h2>
+      <p class="pesan sukses">Kehadiran Anda telah tercatat. Terima kasih!</p>
+    </div>
+  </div>
+</div>
+
+<script>
+let sesiAktif = null;
+let tokenTerakhir = null;
+let jamaahTerpilih = null;
+let lokasi = { lat: null, lng: null };
+
+function fingerprintDevice() {
+  const KEY = 'absen_device_id';
+  let id = localStorage_amanGet(KEY);
+  if (!id) {
+    id = 'dev-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    localStorage_amanSet(KEY, id);
+  }
+  return id;
+}
+// Catatan: localStorage dipakai di sini karena ini halaman biasa (bukan artifact sandbox),
+// hanya untuk menyimpan ID device secara lokal di HP jamaah.
+function localStorage_amanGet(k){ try { return localStorage.getItem(k);} catch(e){ return null; } }
+function localStorage_amanSet(k,v){ try { localStorage.setItem(k,v);} catch(e){} }
+
+const deviceId = fingerprintDevice();
+
+navigator.geolocation && navigator.geolocation.getCurrentPosition(
+  (pos) => { lokasi.lat = pos.coords.latitude; lokasi.lng = pos.coords.longitude; },
+  () => {}
+);
+
+// Ambil sesi aktif dulu
+fetch('/api/sesi/aktif').then(r => r.json()).then(sesi => {
+  if (!sesi) {
+    document.getElementById('pesan-scan').textContent = 'Belum ada sesi ibadah yang sedang berlangsung.';
+    document.getElementById('pesan-scan').style.display = 'block';
+    return;
+  }
+  sesiAktif = sesi;
+  mulaiScanner();
+});
+
+function mulaiScanner() {
+  const scanner = new Html5Qrcode('pembaca-qr');
+  scanner.start(
+    { facingMode: 'environment' },
+    { fps: 10, qrbox: 220 },
+    (teksHasil) => {
+      tokenTerakhir = teksHasil;
+      scanner.stop();
+      document.getElementById('langkah-scan').style.display = 'none';
+      document.getElementById('langkah-nama').style.display = 'block';
+    },
+    () => {} // abaikan frame yang belum kebaca
+  ).catch(() => {
+    document.getElementById('pesan-scan').textContent = 'Tidak bisa mengakses kamera. Izinkan akses kamera di browser.';
+    document.getElementById('pesan-scan').style.display = 'block';
+  });
+}
+
+// Cari nama
+let waktuKetik = null;
+document.getElementById('cari-nama').addEventListener('input', (e) => {
+  clearTimeout(waktuKetik);
+  const q = e.target.value.trim();
+  jamaahTerpilih = null;
+  document.getElementById('btn-absen').disabled = true;
+  waktuKetik = setTimeout(() => {
+    if (!q) { document.getElementById('daftar-nama').innerHTML = ''; return; }
+    fetch('/api/jamaah/cari?q=' + encodeURIComponent(q))
+      .then(r => r.json())
+      .then(hasil => {
+        const kontainer = document.getElementById('daftar-nama');
+        kontainer.innerHTML = '';
+        if (hasil.length === 0) {
+          document.getElementById('belum-terdaftar').style.display = 'block';
+        } else {
+          document.getElementById('belum-terdaftar').style.display = 'none';
+        }
+        hasil.forEach(j => {
+          const el = document.createElement('div');
+          el.className = 'item-nama';
+          el.textContent = j.nama;
+          el.addEventListener('click', () => {
+            document.querySelectorAll('.item-nama').forEach(x => x.classList.remove('terpilih'));
+            el.classList.add('terpilih');
+            jamaahTerpilih = j;
+            document.getElementById('btn-absen').disabled = false;
+          });
+          kontainer.appendChild(el);
+        });
+      });
+  }, 250);
+});
+
+document.getElementById('link-daftar-baru').addEventListener('click', (e) => {
+  e.preventDefault();
+  document.getElementById('langkah-nama').style.display = 'none';
+  document.getElementById('langkah-daftar-baru').style.display = 'block';
+});
+
+document.getElementById('btn-simpan-baru').addEventListener('click', () => {
+  const nama = document.getElementById('nama-baru').value.trim();
+  if (!nama) return;
+  fetch('/api/jamaah', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nama, no_hp: document.getElementById('hp-baru').value.trim() })
+  })
+  .then(r => r.json())
+  .then(j => {
+    jamaahTerpilih = j;
+    kirimAbsen();
+  });
+});
+
+document.getElementById('btn-absen').addEventListener('click', kirimAbsen);
+
+function kirimAbsen() {
+  if (!jamaahTerpilih || !sesiAktif || !tokenTerakhir) return;
+  const btn = document.getElementById('btn-absen');
+  btn.disabled = true;
+  btn.textContent = 'Memproses...';
+
+  fetch('/api/absen', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      sesi_id: sesiAktif.id,
+      token: tokenTerakhir,
+      jamaah_id: jamaahTerpilih.id,
+      device_fingerprint: deviceId,
+      lat: lokasi.lat,
+      lng: lokasi.lng
+    })
+  })
+  .then(r => r.json().then(data => ({ ok: r.ok, data })))
+  .then(({ ok, data }) => {
+    if (!ok) {
+      const pesanEl = document.getElementById('pesan-absen');
+      pesanEl.textContent = data.error;
+      pesanEl.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = 'Absen Sekarang';
+      return;
+    }
+    document.getElementById('langkah-nama').style.display = 'none';
+    document.getElementById('langkah-daftar-baru').style.display = 'none';
+    document.getElementById('langkah-selesai').style.display = 'block';
+    document.getElementById('nama-berhasil').textContent = data.nama;
+  });
+}
+</script>
+</body>
+</html>

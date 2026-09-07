@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Laporan Kehadiran</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="wrap-lebar">
+  <div class="kop"><span class="titik"></span><h1>Laporan Kehadiran</h1></div>
+  <p class="kecil" id="info-jumlah">Memuat data...</p>
+  <div class="kartu">
+    <table>
+      <thead>
+        <tr><th>#</th><th>Nama</th><th>Waktu Absen</th><th>Lokasi</th></tr>
+      </thead>
+      <tbody id="isi-tabel"></tbody>
+    </table>
+  </div>
+</div>
+<script>
+const params = new URLSearchParams(location.search);
+const sesiId = params.get('sesi');
+
+if (!sesiId) {
+  document.getElementById('info-jumlah').textContent = 'Sesi tidak ditemukan.';
+} else {
+  fetch(`/api/sesi/${sesiId}/laporan`).then(r => r.json()).then(daftar => {
+    document.getElementById('info-jumlah').textContent = `${daftar.length} orang tercatat hadir`;
+    const tbody = document.getElementById('isi-tabel');
+    daftar.forEach((d, i) => {
+      const tr = document.createElement('tr');
+      const waktu = new Date(d.waktu_absen).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+      const tagKelas = d.status_lokasi === 'wajar' ? 'wajar' : d.status_lokasi === 'perlu_dicek' ? 'cek' : 'na';
+      const tagTeks = d.status_lokasi === 'wajar' ? 'Wajar' : d.status_lokasi === 'perlu_dicek' ? 'Perlu dicek' : '—';
+      tr.innerHTML = `<td>${i + 1}</td><td>${d.nama}</td><td>${waktu}</td><td><span class="tag ${tagKelas}">${tagTeks}</span></td>`;
+      tbody.appendChild(tr);
+    });
+  });
+}
+</script>
+</body>
+</html>
