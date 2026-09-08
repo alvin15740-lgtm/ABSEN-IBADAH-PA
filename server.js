@@ -76,8 +76,8 @@ app.post('/api/sesi', (req, res) => {
     )
     .run(nama_sesi, lokasi_lat || null, lokasi_lng || null);
 
-  mulaiRotasi(info.lastInsertRowid);
-  res.json({ id: info.lastInsertRowid, nama_sesi });
+    mulaiRotasi(info.lastInsertRowid);
+  res.json({ id: info.lastInsertRowid, nama_sesi, interval_ms: QR_INTERVAL_MS });
 });
 
 app.get('/api/sesi/aktif', (req, res) => {
