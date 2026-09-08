@@ -5,6 +5,27 @@ const db = new DatabaseSync(path.join(__dirname, 'absen.db'));
 db.exec('PRAGMA journal_mode = WAL;');
 
 db.exec(`
+CREATE TABLE IF NOT EXISTS ruangan (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  nama TEXT NOT NULL UNIQUE,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS kelas (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ruangan_id INTEGER NOT NULL,
+  nama TEXT NOT NULL,
+  lokasi_lat REAL,
+  lokasi_lng REAL,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (ruangan_id) REFERENCES ruangan(id)
+);
+
+CREATE TABLE IF NOT EXISTS pengaturan (
+  kunci TEXT PRIMARY KEY,
+  nilai TEXT
+);
+
 CREATE TABLE IF NOT EXISTS jamaah (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   nama TEXT NOT NULL,
@@ -52,16 +73,34 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_device_per_sesi
   ON absensi(sesi_id, device_fingerprint);
 `);
 
-// Migrasi ringan: tambah kolom ruangan kalau database lama belum punya
-try {
-  db.exec('ALTER TABLE sesi_ibadah ADD COLUMN ruangan TEXT');
-} catch (e) {
-  // kolom sudah ada, abaikan
+// ---------- Migrasi ringan (aman dijalankan berulang) ----------
+function tambahKolom(tabel, definisi) {
+  try {
+    db.exec(`ALTER TABLE ${tabel} ADD COLUMN ${definisi}`);
+  } catch (e) {
+    // kolom sudah ada, abaikan
+  }
 }
-try {
-  db.exec('ALTER TABLE jamaah ADD COLUMN kelas TEXT');
-} catch (e) {
-  // kolom sudah ada, abaikan
+
+tambahKolom('sesi_ibadah', 'ruangan TEXT');
+tambahKolom('jamaah', 'kelas TEXT');
+tambahKolom('sesi_ibadah', 'ruangan_id INTEGER');
+tambahKolom('sesi_ibadah', 'kelas_id INTEGER');
+tambahKolom('jamaah', 'kelas_id INTEGER');
+
+// Nilai default pengaturan — hanya diisi kalau kuncinya belum ada
+const DEFAULT_PENGATURAN = {
+  qr_interval_ms: '150000',      // 2,5 menit
+  qr_buffer_ms: '2000',          // toleransi keterlambatan submit
+  jarak_wajar_meter: '1500',     // radius dianggap wajar dari titik kelas
+};
+
+const cekPengaturan = db.prepare('SELECT kunci FROM pengaturan WHERE kunci = ?');
+const isiPengaturan = db.prepare('INSERT INTO pengaturan (kunci, nilai) VALUES (?, ?)');
+for (const [kunci, nilai] of Object.entries(DEFAULT_PENGATURAN)) {
+  if (!cekPengaturan.get(kunci)) {
+    isiPengaturan.run(kunci, nilai);
+  }
 }
 
 module.exports = db;

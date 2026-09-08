@@ -3,24 +3,39 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Layar Absensi — Panitia</title>
+<title>Dashboard Panitia — Absen Ibadah</title>
 <link rel="stylesheet" href="/css/style.css">
 <script src="/socket.io/socket.io.js"></script>
 </head>
 <body>
+
+<nav class="nav-atas">
+  <a href="#" data-tab="sesi" class="aktif">Sesi</a>
+  <a href="#" data-tab="ruangan">Ruangan &amp; Kelas</a>
+  <a href="#" data-tab="pengaturan">Pengaturan</a>
+  <a href="/laporan.html">Riwayat &amp; Laporan</a>
+</nav>
+
+<!-- ===================== TAB: SESI ===================== -->
+<section class="tab-panel" id="tab-sesi">
   <div class="wrap" id="area-buat-sesi">
     <div class="kop"><span class="titik"></span><h1>Mulai Sesi Ibadah</h1></div>
     <div class="kartu">
       <label for="nama_sesi">Nama sesi</label>
       <input type="text" id="nama_sesi" placeholder="Misal: Ibadah Minggu, 7 Sept 2026">
-      <label for="ruangan">Ruangan</label>
-      <input type="text" id="ruangan" placeholder="Misal: Ruang Utama, Ruang Anak, Balkon">
-      <label class="kecil" style="margin-bottom:10px;">
-        <input type="checkbox" id="pakai_lokasi" style="width:auto;display:inline;margin-right:6px;">
-        Catat lokasi gedung sebagai acuan (opsional, untuk penanda tambahan)
-      </label>
-      <button class="btn-utama" id="btn-mulai">Mulai Sesi & Tampilkan QR</button>
-      <p class="pesan error" id="pesan-error" style="display:none;"></p>
+
+      <label for="pilih-ruangan-sesi">Ruangan</label>
+      <select id="pilih-ruangan-sesi">
+        <option value="">Pilih ruangan</option>
+      </select>
+
+      <label for="pilih-kelas-sesi">Kelas</label>
+      <select id="pilih-kelas-sesi" disabled>
+        <option value="">Pilih ruangan dulu</option>
+      </select>
+      <p class="hint" id="hint-lokasi-kelas"></p>
+
+      <button class="btn-utama" id="btn-mulai">Mulai Sesi &amp; Tampilkan QR</button>
     </div>
   </div>
 
@@ -37,13 +52,68 @@
     <button class="btn-luar" id="btn-tutup" style="margin-top:10px;">Tutup Sesi</button>
     <p class="center" style="margin-top:14px;"><a href="#" id="link-laporan" class="kecil">Lihat laporan lengkap →</a></p>
   </div>
+</section>
 
+<!-- ===================== TAB: RUANGAN & KELAS ===================== -->
+<section class="tab-panel" id="tab-ruangan" style="display:none;">
+  <div class="wrap">
+    <div class="kop"><span class="titik"></span><h1>Ruangan &amp; Kelas</h1></div>
+
+    <div class="kartu">
+      <label for="nama-ruangan-baru">Tambah ruangan baru</label>
+      <div class="form-inline">
+        <div><input type="text" id="nama-ruangan-baru" placeholder="Misal: Ruang Utama"></div>
+        <button class="btn-utama" id="btn-tambah-ruangan">Tambah</button>
+      </div>
+    </div>
+
+    <div id="daftar-ruangan"></div>
+  </div>
+</section>
+
+<!-- ===================== TAB: PENGATURAN ===================== -->
+<section class="tab-panel" id="tab-pengaturan" style="display:none;">
+  <div class="wrap">
+    <div class="kop"><span class="titik"></span><h1>Pengaturan</h1></div>
+    <div class="kartu">
+      <label for="set-interval">QR berganti tiap (detik)</label>
+      <input type="number" id="set-interval" min="1" step="1">
+      <p class="hint">Makin kecil, makin sulit di-screenshot &amp; dibagikan orang lain — tapi jamaah harus lebih cepat scan.</p>
+
+      <label for="set-buffer">Toleransi keterlambatan submit (detik)</label>
+      <input type="number" id="set-buffer" min="0" step="1">
+      <p class="hint">Jeda tambahan setelah QR berganti, supaya absen yang sudah diklik tetap tersimpan.</p>
+
+      <label for="set-jarak">Radius lokasi dianggap wajar (meter)</label>
+      <input type="number" id="set-jarak" min="1" step="1">
+      <p class="hint">Jarak dari titik GPS kelas yang masih dianggap wajar saat jamaah absen.</p>
+
+      <button class="btn-utama" id="btn-simpan-pengaturan">Simpan Pengaturan</button>
+    </div>
+  </div>
+</section>
+
+<script src="/js/ui.js"></script>
 <script>
 const socket = io();
 let sesiId = null;
 let jumlahHadir = 0;
 let countdownTimer = null;
-let intervalMs = 5000;
+let intervalMs = 150000;
+let semuaKelas = []; // cache dari /api/kelas
+
+// ---------- Nav tab ----------
+document.querySelectorAll('.nav-atas a[data-tab]').forEach(a => {
+  a.addEventListener('click', (e) => {
+    e.preventDefault();
+    document.querySelectorAll('.nav-atas a[data-tab]').forEach(x => x.classList.remove('aktif'));
+    a.classList.add('aktif');
+    document.querySelectorAll('.tab-panel').forEach(p => p.style.display = 'none');
+    document.getElementById('tab-' + a.dataset.tab).style.display = 'block';
+    if (a.dataset.tab === 'ruangan') muatRuangan();
+    if (a.dataset.tab === 'pengaturan') muatPengaturan();
+  });
+});
 
 function formatDurasi(ms) {
   if (ms < 60000) return Math.round(ms / 1000) + ' detik';
@@ -51,61 +121,84 @@ function formatDurasi(ms) {
   return (Number.isInteger(menit) ? menit : menit.toFixed(1)) + ' menit';
 }
 
-document.getElementById('btn-mulai').addEventListener('click', async () => {
-  const nama_sesi = document.getElementById('nama_sesi').value.trim();
-  const errEl = document.getElementById('pesan-error');
-  errEl.style.display = 'none';
-  if (!nama_sesi) {
-    errEl.textContent = 'Nama sesi wajib diisi.';
-    errEl.style.display = 'block';
+// ================= SESI =================
+
+function muatRuanganUntukSesi() {
+  fetch('/api/ruangan').then(r => r.json()).then(daftar => {
+    const sel = document.getElementById('pilih-ruangan-sesi');
+    sel.innerHTML = '<option value="">Pilih ruangan</option>' +
+      daftar.map(r => `<option value="${r.id}">${r.nama}</option>`).join('');
+  });
+}
+
+document.getElementById('pilih-ruangan-sesi').addEventListener('change', (e) => {
+  const ruanganId = e.target.value;
+  const selKelas = document.getElementById('pilih-kelas-sesi');
+  document.getElementById('hint-lokasi-kelas').textContent = '';
+  if (!ruanganId) {
+    selKelas.innerHTML = '<option value="">Pilih ruangan dulu</option>';
+    selKelas.disabled = true;
     return;
   }
+  fetch(`/api/ruangan/${ruanganId}/kelas`).then(r => r.json()).then(daftar => {
+    if (daftar.length === 0) {
+      selKelas.innerHTML = '<option value="">Belum ada kelas di ruangan ini</option>';
+      selKelas.disabled = true;
+      return;
+    }
+    selKelas.innerHTML = '<option value="">Pilih kelas</option>' +
+      daftar.map(k => `<option value="${k.id}" data-lat="${k.lokasi_lat ?? ''}" data-lng="${k.lokasi_lng ?? ''}">${k.nama}</option>`).join('');
+    selKelas.disabled = false;
+  });
+});
 
-  const payload = { nama_sesi, ruangan: document.getElementById('ruangan').value.trim() };
-
-  const lanjut = () => {
-    fetch('/api/sesi', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    })
-    .then(r => r.json())
-    .then(data => {
-      sesiId = data.id;
-      intervalMs = data.interval_ms || 5000;
-      document.getElementById('teks-interval').textContent = formatDurasi(intervalMs);
-      document.getElementById('area-buat-sesi').style.display = 'none';
-      document.getElementById('area-qr').style.display = 'block';
-      document.getElementById('judul-sesi').textContent = data.nama_sesi;
-      if (data.ruangan) {
-        document.getElementById('teks-ruangan').textContent = 'Ruangan: ' + data.ruangan;
-        document.getElementById('teks-ruangan').style.display = 'block';
-      }
-      document.getElementById('link-laporan').href = '/laporan.html?sesi=' + sesiId;
-      socket.emit('join-sesi', sesiId);
-    });
-  };
-
-  if (document.getElementById('pakai_lokasi').checked && navigator.geolocation) {
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        payload.lokasi_lat = pos.coords.latitude;
-        payload.lokasi_lng = pos.coords.longitude;
-        lanjut();
-      },
-      () => lanjut() // kalau gagal ambil lokasi, tetap lanjut tanpa lokasi
-    );
+document.getElementById('pilih-kelas-sesi').addEventListener('change', (e) => {
+  const opt = e.target.selectedOptions[0];
+  const hint = document.getElementById('hint-lokasi-kelas');
+  if (opt && opt.dataset.lat) {
+    hint.textContent = 'Lokasi GPS kelas ini sudah tersimpan, akan dipakai untuk validasi jarak.';
+  } else if (opt && opt.value) {
+    hint.textContent = 'Kelas ini belum punya lokasi GPS — validasi jarak akan dilewati untuk sesi ini.';
   } else {
-    lanjut();
+    hint.textContent = '';
   }
 });
 
-document.getElementById('btn-tutup').addEventListener('click', () => {
-  if (!sesiId) return;
-  if (!confirm('Tutup sesi ini? QR akan berhenti berlaku.')) return;
-  fetch(`/api/sesi/${sesiId}/tutup`, { method: 'POST' }).then(() => {
-    location.reload();
+document.getElementById('btn-mulai').addEventListener('click', async () => {
+  const nama_sesi = document.getElementById('nama_sesi').value.trim();
+  const kelas_id = document.getElementById('pilih-kelas-sesi').value;
+  if (!nama_sesi) return showToast('Nama sesi wajib diisi.', 'error');
+  if (!kelas_id) return showToast('Pilih ruangan dan kelas terlebih dulu.', 'error');
+
+  const res = await fetch('/api/sesi', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nama_sesi, kelas_id })
   });
+  const data = await res.json();
+  if (!res.ok) return showToast(data.error || 'Gagal memulai sesi.', 'error');
+
+  sesiId = data.id;
+  intervalMs = data.interval_ms || 150000;
+  document.getElementById('teks-interval').textContent = formatDurasi(intervalMs);
+  document.getElementById('area-buat-sesi').style.display = 'none';
+  document.getElementById('area-qr').style.display = 'block';
+  document.getElementById('judul-sesi').textContent = data.nama_sesi;
+  if (data.ruangan) {
+    document.getElementById('teks-ruangan').textContent = 'Ruangan: ' + data.ruangan;
+    document.getElementById('teks-ruangan').style.display = 'block';
+  }
+  document.getElementById('link-laporan').href = '/laporan.html?sesi=' + sesiId;
+  socket.emit('join-sesi', sesiId);
+});
+
+document.getElementById('btn-tutup').addEventListener('click', async () => {
+  if (!sesiId) return;
+  const yakin = await confirmDialog('QR akan berhenti berlaku dan jamaah tidak bisa absen lagi.', {
+    judul: 'Tutup sesi ini?', teksYa: 'Ya, tutup sesi', bahaya: true
+  });
+  if (!yakin) return;
+  fetch(`/api/sesi/${sesiId}/tutup`, { method: 'POST' }).then(() => location.reload());
 });
 
 function mulaiCountdownBar() {
@@ -124,14 +217,211 @@ socket.on('qr-baru', ({ dataUrl }) => {
   mulaiCountdownBar();
 });
 
-socket.on('absen-baru', () => {
+socket.on('absen-baru', ({ nama }) => {
   jumlahHadir++;
   document.getElementById('jumlah-hadir').textContent = jumlahHadir;
+  showToast(`${nama} baru saja absen.`, 'sukses', 2500);
 });
 
 socket.on('sesi-selesai', () => {
-  alert('Sesi telah ditutup.');
-  location.reload();
+  showToast('Sesi telah ditutup.', 'info');
+  setTimeout(() => location.reload(), 1200);
+});
+
+// Cek kalau sudah ada sesi aktif saat halaman dibuka
+fetch('/api/sesi/aktif').then(r => r.json()).then(sesi => {
+  if (sesi) {
+    sesiId = sesi.id;
+    fetch('/api/pengaturan').then(r => r.json()).then(p => {
+      intervalMs = p.qr_interval_ms;
+      document.getElementById('teks-interval').textContent = formatDurasi(intervalMs);
+    });
+    document.getElementById('area-buat-sesi').style.display = 'none';
+    document.getElementById('area-qr').style.display = 'block';
+    document.getElementById('judul-sesi').textContent = sesi.nama_sesi;
+    if (sesi.ruangan) {
+      document.getElementById('teks-ruangan').textContent = 'Ruangan: ' + sesi.ruangan;
+      document.getElementById('teks-ruangan').style.display = 'block';
+    }
+    document.getElementById('link-laporan').href = '/laporan.html?sesi=' + sesiId;
+    socket.emit('join-sesi', sesiId);
+  } else {
+    muatRuanganUntukSesi();
+  }
+});
+
+// ================= RUANGAN & KELAS =================
+
+function muatRuangan() {
+  fetch('/api/ruangan').then(r => r.json()).then(async (daftarRuangan) => {
+    const kontainer = document.getElementById('daftar-ruangan');
+    if (daftarRuangan.length === 0) {
+      kontainer.innerHTML = '<div class="kartu kartu-kosong">Belum ada ruangan. Tambahkan ruangan dulu di atas.</div>';
+      return;
+    }
+    kontainer.innerHTML = '';
+    for (const r of daftarRuangan) {
+      const kelasList = await fetch(`/api/ruangan/${r.id}/kelas`).then(res => res.json());
+      const kartu = document.createElement('div');
+      kartu.className = 'kartu-ruangan';
+      kartu.innerHTML = `
+        <div class="kartu-ruangan-kop">
+          <h3>${r.nama}</h3>
+          <button class="btn-kecil hapus" data-hapus-ruangan="${r.id}">Hapus Ruangan</button>
+        </div>
+        <div class="daftar-kelas" id="daftar-kelas-${r.id}"></div>
+        <div style="padding:14px 18px;">
+          <div class="form-inline">
+            <div><input type="text" placeholder="Nama kelas baru" id="nama-kelas-baru-${r.id}"></div>
+            <button class="btn-kecil" data-tambah-kelas="${r.id}">+ Tambah Kelas</button>
+          </div>
+        </div>`;
+      kontainer.appendChild(kartu);
+
+      const kelasWrap = kartu.querySelector(`#daftar-kelas-${r.id}`);
+      if (kelasList.length === 0) {
+        kelasWrap.innerHTML = '<p class="hint" style="margin:14px 0 0;">Belum ada kelas di ruangan ini.</p>';
+      } else {
+        kelasList.forEach(k => {
+          const baris = document.createElement('div');
+          baris.className = 'baris-kelas';
+          const lokasiTeks = (k.lokasi_lat && k.lokasi_lng)
+            ? `📍 ${Number(k.lokasi_lat).toFixed(5)}, ${Number(k.lokasi_lng).toFixed(5)}`
+            : 'Belum ada lokasi GPS';
+          baris.innerHTML = `
+            <div class="info-kelas">
+              <div class="nama-kelas">${k.nama}</div>
+              <div class="lokasi-kelas">${lokasiTeks}</div>
+            </div>
+            <div class="aksi-kelas">
+              <button class="btn-kecil" data-set-lokasi="${k.id}">Set Lokasi Saat Ini</button>
+              <button class="btn-kecil hapus" data-hapus-kelas="${k.id}">Hapus</button>
+            </div>`;
+          kelasWrap.appendChild(baris);
+        });
+      }
+    }
+    pasangHandlerRuangan();
+  });
+}
+
+function pasangHandlerRuangan() {
+  document.querySelectorAll('[data-hapus-ruangan]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const yakin = await confirmDialog('Ruangan hanya bisa dihapus kalau sudah tidak ada kelas di dalamnya.', {
+        judul: 'Hapus ruangan ini?', bahaya: true
+      });
+      if (!yakin) return;
+      const res = await fetch(`/api/ruangan/${btn.dataset.hapusRuangan}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok) return showToast(data.error, 'error');
+      showToast('Ruangan dihapus.', 'sukses');
+      muatRuangan();
+    });
+  });
+
+  document.querySelectorAll('[data-tambah-kelas]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const ruanganId = btn.dataset.tambahKelas;
+      const input = document.getElementById(`nama-kelas-baru-${ruanganId}`);
+      const nama = input.value.trim();
+      if (!nama) return showToast('Nama kelas wajib diisi.', 'error');
+      const res = await fetch('/api/kelas', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ruangan_id: ruanganId, nama })
+      });
+      const data = await res.json();
+      if (!res.ok) return showToast(data.error, 'error');
+      showToast('Kelas ditambahkan. Jangan lupa set lokasi GPS-nya.', 'sukses');
+      muatRuangan();
+    });
+  });
+
+  document.querySelectorAll('[data-hapus-kelas]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const yakin = await confirmDialog('Kelas ini akan dihapus dari daftar.', {
+        judul: 'Hapus kelas ini?', bahaya: true
+      });
+      if (!yakin) return;
+      await fetch(`/api/kelas/${btn.dataset.hapusKelas}`, { method: 'DELETE' });
+      showToast('Kelas dihapus.', 'sukses');
+      muatRuangan();
+    });
+  });
+
+  document.querySelectorAll('[data-set-lokasi]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (!navigator.geolocation) return showToast('Perangkat tidak mendukung GPS.', 'error');
+      btn.textContent = 'Mengambil lokasi...';
+      navigator.geolocation.getCurrentPosition(async (pos) => {
+        const kelasId = btn.dataset.setLokasi;
+        const kelasSaatIni = await fetch('/api/kelas').then(r => r.json())
+          .then(list => list.find(k => String(k.id) === String(kelasId)));
+        const res = await fetch(`/api/kelas/${kelasId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            nama: kelasSaatIni ? kelasSaatIni.nama : '',
+            lokasi_lat: pos.coords.latitude,
+            lokasi_lng: pos.coords.longitude
+          })
+        });
+        if (!res.ok) return showToast('Gagal menyimpan lokasi.', 'error');
+        showToast('Lokasi kelas disimpan.', 'sukses');
+        muatRuangan();
+      }, () => {
+        showToast('Gagal mengambil lokasi. Pastikan izin GPS diaktifkan.', 'error');
+        btn.textContent = 'Set Lokasi Saat Ini';
+      });
+    });
+  });
+}
+
+document.getElementById('btn-tambah-ruangan').addEventListener('click', async () => {
+  const input = document.getElementById('nama-ruangan-baru');
+  const nama = input.value.trim();
+  if (!nama) return showToast('Nama ruangan wajib diisi.', 'error');
+  const res = await fetch('/api/ruangan', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nama })
+  });
+  const data = await res.json();
+  if (!res.ok) return showToast(data.error, 'error');
+  input.value = '';
+  showToast('Ruangan ditambahkan.', 'sukses');
+  muatRuangan();
+});
+
+// ================= PENGATURAN =================
+
+function muatPengaturan() {
+  fetch('/api/pengaturan').then(r => r.json()).then(p => {
+    document.getElementById('set-interval').value = Math.round(p.qr_interval_ms / 1000);
+    document.getElementById('set-buffer').value = Math.round(p.qr_buffer_ms / 1000);
+    document.getElementById('set-jarak').value = p.jarak_wajar_meter;
+  });
+}
+
+document.getElementById('btn-simpan-pengaturan').addEventListener('click', async () => {
+  const interval = Number(document.getElementById('set-interval').value);
+  const buffer = Number(document.getElementById('set-buffer').value);
+  const jarak = Number(document.getElementById('set-jarak').value);
+  if (!interval || !jarak) return showToast('Isi semua kolom dengan angka yang valid.', 'error');
+
+  const res = await fetch('/api/pengaturan', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      qr_interval_ms: interval * 1000,
+      qr_buffer_ms: buffer * 1000,
+      jarak_wajar_meter: jarak
+    })
+  });
+  const data = await res.json();
+  if (!res.ok) return showToast(data.error, 'error');
+  showToast('Pengaturan disimpan.', 'sukses');
 });
 </script>
 </body>

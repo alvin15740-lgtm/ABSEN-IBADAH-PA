@@ -12,9 +12,21 @@ const io = new Server(server);
 app.use(express.json());
 app.use(express.static('public'));
 
-   const QR_INTERVAL_MS = 150000;   // ganti QR tiap 2,5 menit
-const QR_BUFFER_MS = 2000;     // toleransi keterlambatan submit dari jamaah
-const JARAK_WAJAR_METER = 1500; // radius dianggap "wajar" dari titik lokasi sesi
+// ---------- Pengaturan (dimuat dari DB, bisa diubah lewat halaman Pengaturan) ----------
+
+const pengaturan = {
+  qr_interval_ms: 150000,
+  qr_buffer_ms: 2000,
+  jarak_wajar_meter: 1500,
+};
+
+function muatPengaturan() {
+  const baris = db.prepare('SELECT kunci, nilai FROM pengaturan').all();
+  for (const b of baris) {
+    if (b.kunci in pengaturan) pengaturan[b.kunci] = Number(b.nilai);
+  }
+}
+muatPengaturan();
 
 // Timer rotasi QR per sesi aktif: { [sesiId]: intervalHandle }
 const timers = {};
@@ -36,7 +48,7 @@ async function buatTokenBaru(sesiId) {
   try {
     const token = nanoid(24);
     const createdAt = new Date();
-    const expiredAt = new Date(createdAt.getTime() + QR_INTERVAL_MS);
+    const expiredAt = new Date(createdAt.getTime() + pengaturan.qr_interval_ms);
     db.prepare(
       `INSERT INTO qr_token (sesi_id, token, created_at, expired_at) VALUES (?, ?, ?, ?)`
     ).run(sesiId, token, createdAt.toISOString(), expiredAt.toISOString());
@@ -53,7 +65,7 @@ async function buatTokenBaru(sesiId) {
 function mulaiRotasi(sesiId) {
   if (timers[sesiId]) return;
   buatTokenBaru(sesiId);
-  timers[sesiId] = setInterval(() => buatTokenBaru(sesiId), QR_INTERVAL_MS);
+  timers[sesiId] = setInterval(() => buatTokenBaru(sesiId), pengaturan.qr_interval_ms);
 }
 
 function hentikanRotasi(sesiId) {
@@ -64,20 +76,161 @@ function hentikanRotasi(sesiId) {
   delete qrTerakhir[sesiId];
 }
 
+// Lanjutkan rotasi utk sesi yang masih 'aktif' kalau server baru saja restart
+for (const sesi of db.prepare(`SELECT id FROM sesi_ibadah WHERE status = 'aktif'`).all()) {
+  mulaiRotasi(sesi.id);
+}
+
+// ---------- API: Pengaturan ----------
+
+app.get('/api/pengaturan', (req, res) => {
+  res.json(pengaturan);
+});
+
+app.put('/api/pengaturan', (req, res) => {
+  const { qr_interval_ms, qr_buffer_ms, jarak_wajar_meter } = req.body;
+  const nilaiBaru = { qr_interval_ms, qr_buffer_ms, jarak_wajar_meter };
+  const upsert = db.prepare(
+    `INSERT INTO pengaturan (kunci, nilai) VALUES (?, ?)
+     ON CONFLICT(kunci) DO UPDATE SET nilai = excluded.nilai`
+  );
+  for (const [kunci, nilai] of Object.entries(nilaiBaru)) {
+    if (nilai === undefined || nilai === null || nilai === '') continue;
+    const angka = Number(nilai);
+    if (!Number.isFinite(angka) || angka <= 0) {
+      return res.status(400).json({ error: `Nilai untuk ${kunci} tidak valid.` });
+    }
+    upsert.run(kunci, String(angka));
+    pengaturan[kunci] = angka;
+  }
+  // Sesi yang sedang aktif ikut pakai interval baru mulai rotasi berikutnya
+  for (const sesiId of Object.keys(timers)) {
+    clearInterval(timers[sesiId]);
+    timers[sesiId] = setInterval(() => buatTokenBaru(sesiId), pengaturan.qr_interval_ms);
+  }
+  res.json(pengaturan);
+});
+
+// ---------- API: Ruangan ----------
+
+app.get('/api/ruangan', (req, res) => {
+  const daftar = db
+    .prepare(
+      `SELECT r.id, r.nama,
+              (SELECT COUNT(*) FROM kelas k WHERE k.ruangan_id = r.id) AS jumlah_kelas
+       FROM ruangan r ORDER BY r.nama ASC`
+    )
+    .all();
+  res.json(daftar);
+});
+
+app.post('/api/ruangan', (req, res) => {
+  const nama = (req.body.nama || '').trim();
+  if (!nama) return res.status(400).json({ error: 'Nama ruangan wajib diisi.' });
+  try {
+    const info = db.prepare(`INSERT INTO ruangan (nama) VALUES (?)`).run(nama);
+    res.json({ id: info.lastInsertRowid, nama, jumlah_kelas: 0 });
+  } catch (e) {
+    res.status(400).json({ error: 'Nama ruangan sudah dipakai.' });
+  }
+});
+
+app.delete('/api/ruangan/:id', (req, res) => {
+  const { id } = req.params;
+  const jumlahKelas = db.prepare(`SELECT COUNT(*) AS n FROM kelas WHERE ruangan_id = ?`).get(id).n;
+  if (jumlahKelas > 0) {
+    return res.status(400).json({ error: 'Hapus dulu semua kelas di ruangan ini sebelum menghapus ruangannya.' });
+  }
+  db.prepare(`DELETE FROM ruangan WHERE id = ?`).run(id);
+  res.json({ ok: true });
+});
+
+// ---------- API: Kelas ----------
+
+app.get('/api/kelas', (req, res) => {
+  // Semua kelas, disertai nama ruangannya — dipakai buat dropdown pendaftaran jamaah
+  const daftar = db
+    .prepare(
+      `SELECT k.id, k.nama, k.ruangan_id, r.nama AS ruangan_nama, k.lokasi_lat, k.lokasi_lng
+       FROM kelas k JOIN ruangan r ON r.id = k.ruangan_id
+       ORDER BY r.nama ASC, k.nama ASC`
+    )
+    .all();
+  res.json(daftar);
+});
+
+app.get('/api/ruangan/:id/kelas', (req, res) => {
+  const daftar = db
+    .prepare(`SELECT * FROM kelas WHERE ruangan_id = ? ORDER BY nama ASC`)
+    .all(req.params.id);
+  res.json(daftar);
+});
+
+app.post('/api/kelas', (req, res) => {
+  const { ruangan_id, nama, lokasi_lat, lokasi_lng } = req.body;
+  const namaBersih = (nama || '').trim();
+  if (!ruangan_id || !namaBersih) {
+    return res.status(400).json({ error: 'Ruangan dan nama kelas wajib diisi.' });
+  }
+  const info = db
+    .prepare(`INSERT INTO kelas (ruangan_id, nama, lokasi_lat, lokasi_lng) VALUES (?, ?, ?, ?)`)
+    .run(ruangan_id, namaBersih, lokasi_lat ?? null, lokasi_lng ?? null);
+  res.json({ id: info.lastInsertRowid, ruangan_id, nama: namaBersih, lokasi_lat, lokasi_lng });
+});
+
+app.put('/api/kelas/:id', (req, res) => {
+  const { nama, lokasi_lat, lokasi_lng } = req.body;
+  const namaBersih = (nama || '').trim();
+  if (!namaBersih) return res.status(400).json({ error: 'Nama kelas wajib diisi.' });
+  db.prepare(`UPDATE kelas SET nama = ?, lokasi_lat = ?, lokasi_lng = ? WHERE id = ?`).run(
+    namaBersih,
+    lokasi_lat ?? null,
+    lokasi_lng ?? null,
+    req.params.id
+  );
+  res.json({ ok: true });
+});
+
+app.delete('/api/kelas/:id', (req, res) => {
+  db.prepare(`DELETE FROM kelas WHERE id = ?`).run(req.params.id);
+  res.json({ ok: true });
+});
+
 // ---------- API: Sesi ----------
 
 app.post('/api/sesi', (req, res) => {
-  const { nama_sesi, ruangan, lokasi_lat, lokasi_lng } = req.body;
+  const { nama_sesi, kelas_id } = req.body;
   if (!nama_sesi) return res.status(400).json({ error: 'nama_sesi wajib diisi' });
+  if (!kelas_id) return res.status(400).json({ error: 'Pilih ruangan & kelas terlebih dulu' });
+
+  const kelas = db
+    .prepare(
+      `SELECT k.*, r.nama AS ruangan_nama FROM kelas k JOIN ruangan r ON r.id = k.ruangan_id WHERE k.id = ?`
+    )
+    .get(kelas_id);
+  if (!kelas) return res.status(400).json({ error: 'Kelas tidak ditemukan' });
 
   const info = db
     .prepare(
-      `INSERT INTO sesi_ibadah (nama_sesi, ruangan, lokasi_lat, lokasi_lng, status) VALUES (?, ?, ?, ?, 'aktif')`
+      `INSERT INTO sesi_ibadah (nama_sesi, ruangan, lokasi_lat, lokasi_lng, ruangan_id, kelas_id, status)
+       VALUES (?, ?, ?, ?, ?, ?, 'aktif')`
     )
-    .run(nama_sesi, ruangan || null, lokasi_lat || null, lokasi_lng || null);
+    .run(
+      nama_sesi,
+      `${kelas.ruangan_nama} — ${kelas.nama}`,
+      kelas.lokasi_lat,
+      kelas.lokasi_lng,
+      kelas.ruangan_id,
+      kelas.id
+    );
 
   mulaiRotasi(info.lastInsertRowid);
-  res.json({ id: info.lastInsertRowid, nama_sesi, ruangan, interval_ms: QR_INTERVAL_MS });
+  res.json({
+    id: info.lastInsertRowid,
+    nama_sesi,
+    ruangan: `${kelas.ruangan_nama} — ${kelas.nama}`,
+    interval_ms: pengaturan.qr_interval_ms,
+  });
 });
 
 app.get('/api/sesi/aktif', (req, res) => {
@@ -85,6 +238,17 @@ app.get('/api/sesi/aktif', (req, res) => {
     .prepare(`SELECT * FROM sesi_ibadah WHERE status = 'aktif' ORDER BY id DESC LIMIT 1`)
     .get();
   res.json(sesi || null);
+});
+
+app.get('/api/sesi', (req, res) => {
+  const daftar = db
+    .prepare(
+      `SELECT s.id, s.nama_sesi, s.ruangan, s.waktu_mulai, s.waktu_selesai, s.status,
+              (SELECT COUNT(*) FROM absensi a WHERE a.sesi_id = s.id) AS jumlah_hadir
+       FROM sesi_ibadah s ORDER BY s.id DESC LIMIT 100`
+    )
+    .all();
+  res.json(daftar);
 });
 
 app.get('/api/sesi/:id', (req, res) => {
@@ -108,16 +272,31 @@ app.post('/api/sesi/:id/tutup', (req, res) => {
 app.get('/api/jamaah/cari', (req, res) => {
   const q = `%${req.query.q || ''}%`;
   const hasil = db
-    .prepare(`SELECT id, nama, kelas FROM jamaah WHERE nama LIKE ? ORDER BY nama LIMIT 15`)
+    .prepare(
+      `SELECT j.id, j.nama, j.kelas, j.kelas_id, k.nama AS kelas_nama, r.nama AS ruangan_nama
+       FROM jamaah j
+       LEFT JOIN kelas k ON k.id = j.kelas_id
+       LEFT JOIN ruangan r ON r.id = k.ruangan_id
+       WHERE j.nama LIKE ? ORDER BY j.nama LIMIT 15`
+    )
     .all(q);
   res.json(hasil);
 });
 
 app.post('/api/jamaah', (req, res) => {
-  const { nama, kelas, no_hp } = req.body;
+  const { nama, kelas_id, no_hp } = req.body;
   if (!nama || !nama.trim()) return res.status(400).json({ error: 'nama wajib diisi' });
-  const info = db.prepare(`INSERT INTO jamaah (nama, kelas, no_hp) VALUES (?, ?, ?)`).run(nama.trim(), kelas || null, no_hp || null);
-  res.json({ id: info.lastInsertRowid, nama: nama.trim(), kelas: kelas || null });
+
+  let kelasNamaText = null;
+  if (kelas_id) {
+    const k = db.prepare(`SELECT nama FROM kelas WHERE id = ?`).get(kelas_id);
+    if (k) kelasNamaText = k.nama;
+  }
+
+  const info = db
+    .prepare(`INSERT INTO jamaah (nama, kelas, kelas_id, no_hp) VALUES (?, ?, ?, ?)`)
+    .run(nama.trim(), kelasNamaText, kelas_id || null, no_hp || null);
+  res.json({ id: info.lastInsertRowid, nama: nama.trim(), kelas: kelasNamaText, kelas_id: kelas_id || null });
 });
 
 // ---------- API: Absen ----------
@@ -139,7 +318,7 @@ app.post('/api/absen', (req, res) => {
     return res.status(400).json({ error: 'QR tidak dikenali. Coba scan ulang.' });
   }
 
-  const batasWaktu = new Date(new Date(qrToken.expired_at).getTime() + QR_BUFFER_MS);
+  const batasWaktu = new Date(new Date(qrToken.expired_at).getTime() + pengaturan.qr_buffer_ms);
   if (new Date() > batasWaktu) {
     return res.status(400).json({ error: 'QR sudah kedaluwarsa. Silakan scan QR yang sedang tampil.' });
   }
@@ -163,7 +342,7 @@ app.post('/api/absen', (req, res) => {
   let statusLokasi = 'tidak_diketahui';
   if (lat && lng && sesi.lokasi_lat && sesi.lokasi_lng) {
     const jarak = jarakMeter(lat, lng, sesi.lokasi_lat, sesi.lokasi_lng);
-    statusLokasi = jarak <= JARAK_WAJAR_METER ? 'wajar' : 'perlu_dicek';
+    statusLokasi = jarak <= pengaturan.jarak_wajar_meter ? 'wajar' : 'perlu_dicek';
   }
 
   db.prepare(

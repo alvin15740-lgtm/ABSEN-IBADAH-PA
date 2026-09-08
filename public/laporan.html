@@ -7,73 +7,136 @@
 <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
-<div class="wrap-lebar">
-  <div class="kop"><span class="titik"></span><h1>Laporan Kehadiran</h1></div>
-  <p class="kecil" id="info-ruangan" style="display:none;"></p>
-  <p class="kecil" id="info-jumlah">Memuat data...</p>
-  <div style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;" id="filter-kelas">
-    <button class="btn-luar filter-btn aktif" data-kelas="semua" style="width:auto; padding:8px 16px;">Semua</button>
-    <button class="btn-luar filter-btn" data-kelas="10" style="width:auto; padding:8px 16px;">Kelas 10</button>
-    <button class="btn-luar filter-btn" data-kelas="11" style="width:auto; padding:8px 16px;">Kelas 11</button>
-    <button class="btn-luar filter-btn" data-kelas="12" style="width:auto; padding:8px 16px;">Kelas 12</button>
-  </div>
-  <div class="kartu">
-    <table>
-      <thead>
-        <tr><th>#</th><th>Nama</th><th>Kelas</th><th>Waktu Absen</th><th>Lokasi</th></tr>
-      </thead>
-      <tbody id="isi-tabel"></tbody>
-    </table>
+
+<div id="tampilan-riwayat" style="display:none;">
+  <div class="wrap-lebar">
+    <div class="kop"><span class="titik"></span><h1>Riwayat Sesi</h1></div>
+    <p class="kecil" style="margin-top:-16px;margin-bottom:16px;"><a href="/admin.html">← Kembali ke Dashboard</a></p>
+    <div class="kartu" id="kartu-riwayat">
+      <p class="kecil">Memuat data...</p>
+    </div>
   </div>
 </div>
+
+<div id="tampilan-detail" style="display:none;">
+  <div class="wrap-lebar">
+    <div class="kop"><span class="titik"></span><h1>Laporan Kehadiran</h1></div>
+    <p class="kecil" style="margin-top:-16px;margin-bottom:16px;"><a href="/laporan.html">← Semua riwayat sesi</a></p>
+    <p class="kecil" id="info-ruangan" style="display:none;"></p>
+    <p class="kecil" id="info-jumlah">Memuat data...</p>
+    <div style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;" id="filter-kelas">
+      <button class="btn-luar filter-btn aktif" data-kelas="semua" style="width:auto; padding:8px 16px;">Semua</button>
+    </div>
+    <div class="kartu">
+      <table>
+        <thead>
+          <tr><th>#</th><th>Nama</th><th>Kelas</th><th>Waktu Absen</th><th>Lokasi</th></tr>
+        </thead>
+        <tbody id="isi-tabel"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
 <script>
 const params = new URLSearchParams(location.search);
 const sesiId = params.get('sesi');
-let semuaData = [];
-let filterAktif = 'semua';
 
 if (!sesiId) {
-  document.getElementById('info-jumlah').textContent = 'Sesi tidak ditemukan.';
+  tampilkanRiwayat();
 } else {
-  fetch(`/api/sesi/${sesiId}`).then(r => r.json()).then(sesi => {
-    if (sesi && sesi.ruangan) {
-      const el = document.getElementById('info-ruangan');
-      el.textContent = `${sesi.nama_sesi} — Ruangan: ${sesi.ruangan}`;
-      el.style.display = 'block';
-    }
-  });
+  tampilkanDetail(sesiId);
+}
 
-  fetch(`/api/sesi/${sesiId}/laporan`).then(r => r.json()).then(daftar => {
-    semuaData = daftar;
-    renderTabel();
+function tampilkanRiwayat() {
+  document.getElementById('tampilan-riwayat').style.display = 'block';
+  fetch('/api/sesi').then(r => r.json()).then(daftar => {
+    const kartu = document.getElementById('kartu-riwayat');
+    if (daftar.length === 0) {
+      kartu.innerHTML = '<p class="kecil">Belum ada sesi yang pernah dibuat.</p>';
+      return;
+    }
+    kartu.innerHTML = '';
+    daftar.forEach(s => {
+      const tgl = new Date(s.waktu_mulai).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
+      const jam = new Date(s.waktu_mulai).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+      const a = document.createElement('a');
+      a.className = 'baris-riwayat';
+      a.href = '/laporan.html?sesi=' + s.id;
+      a.innerHTML = `
+        <div>
+          <div class="nama-riwayat">${s.nama_sesi}</div>
+          <div class="meta-riwayat">${s.ruangan ? s.ruangan + ' · ' : ''}${tgl}, ${jam} · ${s.jumlah_hadir} hadir</div>
+        </div>
+        <span class="badge-status ${s.status}">${s.status === 'aktif' ? 'Aktif' : 'Selesai'}</span>`;
+      kartu.appendChild(a);
+    });
   });
 }
 
-document.querySelectorAll('.filter-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
+function tampilkanDetail(id) {
+  document.getElementById('tampilan-detail').style.display = 'block';
+  let semuaData = [];
+  let filterAktif = 'semua';
+
+  fetch(`/api/sesi/${id}`).then(r => r.json()).then(sesi => {
+    if (sesi && sesi.ruangan) {
+      const el = document.getElementById('info-ruangan');
+      el.textContent = `${sesi.nama_sesi} — ${sesi.ruangan}`;
+      el.style.display = 'block';
+    } else if (!sesi) {
+      document.getElementById('info-jumlah').textContent = 'Sesi tidak ditemukan.';
+    }
+  });
+
+  fetch(`/api/sesi/${id}/laporan`).then(r => r.json()).then(daftar => {
+    semuaData = daftar;
+    bangunFilterKelas();
+    renderTabel();
+  });
+
+  function bangunFilterKelas() {
+    const daftarKelas = [...new Set(semuaData.map(d => d.kelas).filter(Boolean))].sort();
+    const kontainer = document.getElementById('filter-kelas');
+    daftarKelas.forEach(kelas => {
+      const btn = document.createElement('button');
+      btn.className = 'btn-luar filter-btn';
+      btn.dataset.kelas = kelas;
+      btn.style.width = 'auto';
+      btn.style.padding = '8px 16px';
+      btn.textContent = kelas;
+      btn.addEventListener('click', () => pilihFilter(btn));
+      kontainer.appendChild(btn);
+    });
+    document.querySelector('.filter-btn[data-kelas="semua"]').addEventListener('click', function () {
+      pilihFilter(this);
+    });
+  }
+
+  function pilihFilter(btn) {
     document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('aktif'));
     btn.classList.add('aktif');
     filterAktif = btn.dataset.kelas;
     renderTabel();
-  });
-});
+  }
 
-function renderTabel() {
-  const daftar = filterAktif === 'semua'
-    ? semuaData
-    : semuaData.filter(d => d.kelas === filterAktif);
+  function renderTabel() {
+    const daftar = filterAktif === 'semua'
+      ? semuaData
+      : semuaData.filter(d => d.kelas === filterAktif);
 
-  document.getElementById('info-jumlah').textContent = `${daftar.length} orang tercatat hadir`;
-  const tbody = document.getElementById('isi-tabel');
-  tbody.innerHTML = '';
-  daftar.forEach((d, i) => {
-    const tr = document.createElement('tr');
-    const waktu = new Date(d.waktu_absen).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
-    const tagKelas = d.status_lokasi === 'wajar' ? 'wajar' : d.status_lokasi === 'perlu_dicek' ? 'cek' : 'na';
-    const tagTeks = d.status_lokasi === 'wajar' ? 'Wajar' : d.status_lokasi === 'perlu_dicek' ? 'Perlu dicek' : '—';
-    tr.innerHTML = `<td>${i + 1}</td><td>${d.nama}</td><td>${d.kelas || '—'}</td><td>${waktu}</td><td><span class="tag ${tagKelas}">${tagTeks}</span></td>`;
-    tbody.appendChild(tr);
-  });
+    document.getElementById('info-jumlah').textContent = `${daftar.length} orang tercatat hadir`;
+    const tbody = document.getElementById('isi-tabel');
+    tbody.innerHTML = '';
+    daftar.forEach((d, i) => {
+      const tr = document.createElement('tr');
+      const waktu = new Date(d.waktu_absen).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+      const tagKelas = d.status_lokasi === 'wajar' ? 'wajar' : d.status_lokasi === 'perlu_dicek' ? 'cek' : 'na';
+      const tagTeks = d.status_lokasi === 'wajar' ? 'Wajar' : d.status_lokasi === 'perlu_dicek' ? 'Perlu dicek' : '—';
+      tr.innerHTML = `<td>${i + 1}</td><td>${d.nama}</td><td>${d.kelas || '—'}</td><td>${waktu}</td><td><span class="tag ${tagKelas}">${tagTeks}</span></td>`;
+      tbody.appendChild(tr);
+    });
+  }
 }
 </script>
 </body>
