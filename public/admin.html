@@ -26,7 +26,7 @@
     <div class="kop"><span class="titik"></span><h1 id="judul-sesi">Sesi Ibadah</h1></div>
     <div class="qr-panggung">
       <div id="qr-canvas"></div>
-      <div class="hitung-mundur">QR berganti tiap <strong>5 detik</strong></div>
+      <div class="hitung-mundur">QR berganti tiap <strong id="teks-interval">...</strong></div>
       <div class="bar-waktu"><div class="bar-waktu-isi" id="bar-isi"></div></div>
     </div>
     <p class="kecil center" style="margin-top:16px;">Jamaah scan kode ini dari <strong>/absen</strong> di HP masing-masing.</p>
@@ -40,6 +40,13 @@ const socket = io();
 let sesiId = null;
 let jumlahHadir = 0;
 let countdownTimer = null;
+let intervalMs = 5000;
+
+function formatDurasi(ms) {
+  if (ms < 60000) return Math.round(ms / 1000) + ' detik';
+  const menit = ms / 60000;
+  return (Number.isInteger(menit) ? menit : menit.toFixed(1)) + ' menit';
+}
 
 document.getElementById('btn-mulai').addEventListener('click', async () => {
   const nama_sesi = document.getElementById('nama_sesi').value.trim();
@@ -62,6 +69,8 @@ document.getElementById('btn-mulai').addEventListener('click', async () => {
     .then(r => r.json())
     .then(data => {
       sesiId = data.id;
+      intervalMs = data.interval_ms || 5000;
+      document.getElementById('teks-interval').textContent = formatDurasi(intervalMs);
       document.getElementById('area-buat-sesi').style.display = 'none';
       document.getElementById('area-qr').style.display = 'block';
       document.getElementById('judul-sesi').textContent = data.nama_sesi;
@@ -94,7 +103,7 @@ document.getElementById('btn-tutup').addEventListener('click', () => {
 
 function mulaiCountdownBar() {
   clearInterval(countdownTimer);
-  const durasi = 5000;
+  const durasi = intervalMs;
   const mulai = Date.now();
   const bar = document.getElementById('bar-isi');
   countdownTimer = setInterval(() => {
