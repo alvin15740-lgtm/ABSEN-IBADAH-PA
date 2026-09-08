@@ -1,7 +1,29 @@
 const { DatabaseSync } = require('node:sqlite');
 const path = require('path');
+const fs = require('fs');
 
-const db = new DatabaseSync(path.join(__dirname, 'absen.db'));
+// Folder permanen: kalau Volume Railway sudah di-attach, RAILWAY_VOLUME_MOUNT_PATH
+// otomatis terisi oleh Railway (contoh: "/data"). Kalau belum ada Volume / jalan
+// di komputer lokal, fallback ke folder project seperti sebelumnya.
+const DATA_DIR = process.env.RAILWAY_VOLUME_MOUNT_PATH || __dirname;
+const DB_PATH = path.join(DATA_DIR, 'absen.db');
+const DB_PATH_LAMA = path.join(__dirname, 'absen.db');
+
+// Migrasi otomatis sekali: kalau database belum ada di folder Volume, tapi ada
+// peninggalan di folder lama (dari sebelum Volume dipasang), salin dulu isinya
+// supaya data absen yang sudah tercatat tidak hilang.
+if (DATA_DIR !== __dirname) {
+  if (!fs.existsSync(DB_PATH) && fs.existsSync(DB_PATH_LAMA)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.copyFileSync(DB_PATH_LAMA, DB_PATH);
+    console.log(`[migrasi] Database lama disalin ke Volume: ${DB_PATH}`);
+  } else {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+}
+
+console.log(`[db] Menggunakan database di: ${DB_PATH}`);
+const db = new DatabaseSync(DB_PATH);
 db.exec('PRAGMA journal_mode = WAL;');
 
 db.exec(`
