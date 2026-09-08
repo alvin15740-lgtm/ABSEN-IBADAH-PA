@@ -12,7 +12,7 @@ const io = new Server(server);
 app.use(express.json());
 app.use(express.static('public'));
 
-const QR_INTERVAL_MS = 5000;   // ganti QR tiap 5 detik
+   const QR_INTERVAL_MS = 150000;   // ganti QR tiap 2,5 menit
 const QR_BUFFER_MS = 2000;     // toleransi keterlambatan submit dari jamaah
 const JARAK_WAJAR_METER = 150; // radius dianggap "wajar" dari titik lokasi sesi
 
