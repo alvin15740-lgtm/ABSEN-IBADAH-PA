@@ -12,12 +12,14 @@ const io = new Server(server);
 app.use(express.json());
 app.use(express.static('public'));
 
-const QR_INTERVAL_MS = 180000;  // ganti QR tiap 5 detik
+const QR_INTERVAL_MS = 5000;   // ganti QR tiap 5 detik
 const QR_BUFFER_MS = 2000;     // toleransi keterlambatan submit dari jamaah
 const JARAK_WAJAR_METER = 150; // radius dianggap "wajar" dari titik lokasi sesi
 
 // Timer rotasi QR per sesi aktif: { [sesiId]: intervalHandle }
 const timers = {};
+// QR terakhir per sesi, biar client yang baru join langsung dapat QR yang lagi aktif
+const qrTerakhir = {};
 
 function jarakMeter(lat1, lng1, lat2, lng2) {
   const R = 6371000;
@@ -31,15 +33,21 @@ function jarakMeter(lat1, lng1, lat2, lng2) {
 }
 
 async function buatTokenBaru(sesiId) {
-  const token = nanoid(24);
-  const createdAt = new Date();
-  const expiredAt = new Date(createdAt.getTime() + QR_INTERVAL_MS);
-  db.prepare(
-    `INSERT INTO qr_token (sesi_id, token, created_at, expired_at) VALUES (?, ?, ?, ?)`
-  ).run(sesiId, token, createdAt.toISOString(), expiredAt.toISOString());
+  try {
+    const token = nanoid(24);
+    const createdAt = new Date();
+    const expiredAt = new Date(createdAt.getTime() + QR_INTERVAL_MS);
+    db.prepare(
+      `INSERT INTO qr_token (sesi_id, token, created_at, expired_at) VALUES (?, ?, ?, ?)`
+    ).run(sesiId, token, createdAt.toISOString(), expiredAt.toISOString());
 
-  const dataUrl = await QRCode.toDataURL(token, { width: 320, margin: 1 });
-  io.to(`sesi-${sesiId}`).emit('qr-baru', { token, dataUrl });
+    const dataUrl = await QRCode.toDataURL(token, { width: 320, margin: 1 });
+    qrTerakhir[sesiId] = { token, dataUrl };
+    io.to(`sesi-${sesiId}`).emit('qr-baru', { token, dataUrl });
+    console.log(`[OK] QR baru untuk sesi ${sesiId}`);
+  } catch (err) {
+    console.error(`[GAGAL] Bikin QR untuk sesi ${sesiId}:`, err);
+  }
 }
 
 function mulaiRotasi(sesiId) {
@@ -53,6 +61,7 @@ function hentikanRotasi(sesiId) {
     clearInterval(timers[sesiId]);
     delete timers[sesiId];
   }
+  delete qrTerakhir[sesiId];
 }
 
 // ---------- API: Sesi ----------
@@ -180,6 +189,9 @@ app.get('/api/sesi/:id/laporan', (req, res) => {
 io.on('connection', (socket) => {
   socket.on('join-sesi', (sesiId) => {
     socket.join(`sesi-${sesiId}`);
+    if (qrTerakhir[sesiId]) {
+      socket.emit('qr-baru', qrTerakhir[sesiId]);
+    }
   });
 });
 
