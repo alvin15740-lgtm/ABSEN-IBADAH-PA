@@ -189,3 +189,9 @@ th { color: var(--teks-muted); font-weight: 500; font-size: 12px; text-transform
 
 .center { text-align: center; }
 .kecil { font-size: 13px; color: var(--teks-muted); }
+
+.filter-btn.aktif {
+  background: var(--hijau-tua);
+  color: #fff;
+  border-color: var(--hijau-tua);
+}

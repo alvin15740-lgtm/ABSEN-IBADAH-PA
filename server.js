@@ -12,7 +12,7 @@ const io = new Server(server);
 app.use(express.json());
 app.use(express.static('public'));
 
-const QR_INTERVAL_MS = 150000;   // ganti QR tiap 2,5 menit
+const QR_INTERVAL_MS = 5000;   // ganti QR tiap 5 detik
 const QR_BUFFER_MS = 2000;     // toleransi keterlambatan submit dari jamaah
 const JARAK_WAJAR_METER = 150; // radius dianggap "wajar" dari titik lokasi sesi
 
@@ -67,23 +67,28 @@ function hentikanRotasi(sesiId) {
 // ---------- API: Sesi ----------
 
 app.post('/api/sesi', (req, res) => {
-  const { nama_sesi, lokasi_lat, lokasi_lng } = req.body;
+  const { nama_sesi, ruangan, lokasi_lat, lokasi_lng } = req.body;
   if (!nama_sesi) return res.status(400).json({ error: 'nama_sesi wajib diisi' });
 
   const info = db
     .prepare(
-      `INSERT INTO sesi_ibadah (nama_sesi, lokasi_lat, lokasi_lng, status) VALUES (?, ?, ?, 'aktif')`
+      `INSERT INTO sesi_ibadah (nama_sesi, ruangan, lokasi_lat, lokasi_lng, status) VALUES (?, ?, ?, ?, 'aktif')`
     )
-    .run(nama_sesi, lokasi_lat || null, lokasi_lng || null);
+    .run(nama_sesi, ruangan || null, lokasi_lat || null, lokasi_lng || null);
 
-    mulaiRotasi(info.lastInsertRowid);
-  res.json({ id: info.lastInsertRowid, nama_sesi, interval_ms: QR_INTERVAL_MS });
+  mulaiRotasi(info.lastInsertRowid);
+  res.json({ id: info.lastInsertRowid, nama_sesi, ruangan, interval_ms: QR_INTERVAL_MS });
 });
 
 app.get('/api/sesi/aktif', (req, res) => {
   const sesi = db
     .prepare(`SELECT * FROM sesi_ibadah WHERE status = 'aktif' ORDER BY id DESC LIMIT 1`)
     .get();
+  res.json(sesi || null);
+});
+
+app.get('/api/sesi/:id', (req, res) => {
+  const sesi = db.prepare(`SELECT * FROM sesi_ibadah WHERE id = ?`).get(req.params.id);
   res.json(sesi || null);
 });
 
@@ -103,16 +108,16 @@ app.post('/api/sesi/:id/tutup', (req, res) => {
 app.get('/api/jamaah/cari', (req, res) => {
   const q = `%${req.query.q || ''}%`;
   const hasil = db
-    .prepare(`SELECT id, nama FROM jamaah WHERE nama LIKE ? ORDER BY nama LIMIT 15`)
+    .prepare(`SELECT id, nama, kelas FROM jamaah WHERE nama LIKE ? ORDER BY nama LIMIT 15`)
     .all(q);
   res.json(hasil);
 });
 
 app.post('/api/jamaah', (req, res) => {
-  const { nama, no_hp } = req.body;
+  const { nama, kelas, no_hp } = req.body;
   if (!nama || !nama.trim()) return res.status(400).json({ error: 'nama wajib diisi' });
-  const info = db.prepare(`INSERT INTO jamaah (nama, no_hp) VALUES (?, ?)`).run(nama.trim(), no_hp || null);
-  res.json({ id: info.lastInsertRowid, nama: nama.trim() });
+  const info = db.prepare(`INSERT INTO jamaah (nama, kelas, no_hp) VALUES (?, ?, ?)`).run(nama.trim(), kelas || null, no_hp || null);
+  res.json({ id: info.lastInsertRowid, nama: nama.trim(), kelas: kelas || null });
 });
 
 // ---------- API: Absen ----------
@@ -176,9 +181,9 @@ app.get('/api/sesi/:id/laporan', (req, res) => {
   const { id } = req.params;
   const daftar = db
     .prepare(
-      `SELECT a.id, j.nama, a.waktu_absen, a.status_lokasi
+      `SELECT a.id, j.nama, j.kelas, a.waktu_absen, a.status_lokasi
        FROM absensi a JOIN jamaah j ON j.id = a.jamaah_id
-       WHERE a.sesi_id = ? ORDER BY a.waktu_absen ASC`
+       WHERE a.sesi_id = ? ORDER BY j.kelas ASC, a.waktu_absen ASC`
     )
     .all(id);
   res.json(daftar);

@@ -8,6 +8,7 @@ db.exec(`
 CREATE TABLE IF NOT EXISTS jamaah (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   nama TEXT NOT NULL,
+  kelas TEXT,
   no_hp TEXT,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
@@ -15,6 +16,7 @@ CREATE TABLE IF NOT EXISTS jamaah (
 CREATE TABLE IF NOT EXISTS sesi_ibadah (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   nama_sesi TEXT NOT NULL,
+  ruangan TEXT,
   lokasi_lat REAL,
   lokasi_lng REAL,
   waktu_mulai TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -49,5 +51,17 @@ CREATE TABLE IF NOT EXISTS absensi (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_device_per_sesi
   ON absensi(sesi_id, device_fingerprint);
 `);
+
+// Migrasi ringan: tambah kolom ruangan kalau database lama belum punya
+try {
+  db.exec('ALTER TABLE sesi_ibadah ADD COLUMN ruangan TEXT');
+} catch (e) {
+  // kolom sudah ada, abaikan
+}
+try {
+  db.exec('ALTER TABLE jamaah ADD COLUMN kelas TEXT');
+} catch (e) {
+  // kolom sudah ada, abaikan
+}
 
 module.exports = db;

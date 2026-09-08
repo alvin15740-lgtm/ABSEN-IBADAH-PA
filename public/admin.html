@@ -13,6 +13,8 @@
     <div class="kartu">
       <label for="nama_sesi">Nama sesi</label>
       <input type="text" id="nama_sesi" placeholder="Misal: Ibadah Minggu, 7 Sept 2026">
+      <label for="ruangan">Ruangan</label>
+      <input type="text" id="ruangan" placeholder="Misal: Ruang Utama, Ruang Anak, Balkon">
       <label class="kecil" style="margin-bottom:10px;">
         <input type="checkbox" id="pakai_lokasi" style="width:auto;display:inline;margin-right:6px;">
         Catat lokasi gedung sebagai acuan (opsional, untuk penanda tambahan)
@@ -24,6 +26,7 @@
 
   <div class="wrap" id="area-qr" style="display:none;">
     <div class="kop"><span class="titik"></span><h1 id="judul-sesi">Sesi Ibadah</h1></div>
+    <p class="kecil" id="teks-ruangan" style="margin-top:-16px; margin-bottom:20px; display:none;"></p>
     <div class="qr-panggung">
       <div id="qr-canvas"></div>
       <div class="hitung-mundur">QR berganti tiap <strong id="teks-interval">...</strong></div>
@@ -58,7 +61,7 @@ document.getElementById('btn-mulai').addEventListener('click', async () => {
     return;
   }
 
-  const payload = { nama_sesi };
+  const payload = { nama_sesi, ruangan: document.getElementById('ruangan').value.trim() };
 
   const lanjut = () => {
     fetch('/api/sesi', {
@@ -74,6 +77,10 @@ document.getElementById('btn-mulai').addEventListener('click', async () => {
       document.getElementById('area-buat-sesi').style.display = 'none';
       document.getElementById('area-qr').style.display = 'block';
       document.getElementById('judul-sesi').textContent = data.nama_sesi;
+      if (data.ruangan) {
+        document.getElementById('teks-ruangan').textContent = 'Ruangan: ' + data.ruangan;
+        document.getElementById('teks-ruangan').style.display = 'block';
+      }
       document.getElementById('link-laporan').href = '/laporan.html?sesi=' + sesiId;
       socket.emit('join-sesi', sesiId);
     });

@@ -9,11 +9,18 @@
 <body>
 <div class="wrap-lebar">
   <div class="kop"><span class="titik"></span><h1>Laporan Kehadiran</h1></div>
+  <p class="kecil" id="info-ruangan" style="display:none;"></p>
   <p class="kecil" id="info-jumlah">Memuat data...</p>
+  <div style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;" id="filter-kelas">
+    <button class="btn-luar filter-btn aktif" data-kelas="semua" style="width:auto; padding:8px 16px;">Semua</button>
+    <button class="btn-luar filter-btn" data-kelas="10" style="width:auto; padding:8px 16px;">Kelas 10</button>
+    <button class="btn-luar filter-btn" data-kelas="11" style="width:auto; padding:8px 16px;">Kelas 11</button>
+    <button class="btn-luar filter-btn" data-kelas="12" style="width:auto; padding:8px 16px;">Kelas 12</button>
+  </div>
   <div class="kartu">
     <table>
       <thead>
-        <tr><th>#</th><th>Nama</th><th>Waktu Absen</th><th>Lokasi</th></tr>
+        <tr><th>#</th><th>Nama</th><th>Kelas</th><th>Waktu Absen</th><th>Lokasi</th></tr>
       </thead>
       <tbody id="isi-tabel"></tbody>
     </table>
@@ -22,21 +29,50 @@
 <script>
 const params = new URLSearchParams(location.search);
 const sesiId = params.get('sesi');
+let semuaData = [];
+let filterAktif = 'semua';
 
 if (!sesiId) {
   document.getElementById('info-jumlah').textContent = 'Sesi tidak ditemukan.';
 } else {
+  fetch(`/api/sesi/${sesiId}`).then(r => r.json()).then(sesi => {
+    if (sesi && sesi.ruangan) {
+      const el = document.getElementById('info-ruangan');
+      el.textContent = `${sesi.nama_sesi} — Ruangan: ${sesi.ruangan}`;
+      el.style.display = 'block';
+    }
+  });
+
   fetch(`/api/sesi/${sesiId}/laporan`).then(r => r.json()).then(daftar => {
-    document.getElementById('info-jumlah').textContent = `${daftar.length} orang tercatat hadir`;
-    const tbody = document.getElementById('isi-tabel');
-    daftar.forEach((d, i) => {
-      const tr = document.createElement('tr');
-      const waktu = new Date(d.waktu_absen).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
-      const tagKelas = d.status_lokasi === 'wajar' ? 'wajar' : d.status_lokasi === 'perlu_dicek' ? 'cek' : 'na';
-      const tagTeks = d.status_lokasi === 'wajar' ? 'Wajar' : d.status_lokasi === 'perlu_dicek' ? 'Perlu dicek' : '—';
-      tr.innerHTML = `<td>${i + 1}</td><td>${d.nama}</td><td>${waktu}</td><td><span class="tag ${tagKelas}">${tagTeks}</span></td>`;
-      tbody.appendChild(tr);
-    });
+    semuaData = daftar;
+    renderTabel();
+  });
+}
+
+document.querySelectorAll('.filter-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('aktif'));
+    btn.classList.add('aktif');
+    filterAktif = btn.dataset.kelas;
+    renderTabel();
+  });
+});
+
+function renderTabel() {
+  const daftar = filterAktif === 'semua'
+    ? semuaData
+    : semuaData.filter(d => d.kelas === filterAktif);
+
+  document.getElementById('info-jumlah').textContent = `${daftar.length} orang tercatat hadir`;
+  const tbody = document.getElementById('isi-tabel');
+  tbody.innerHTML = '';
+  daftar.forEach((d, i) => {
+    const tr = document.createElement('tr');
+    const waktu = new Date(d.waktu_absen).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+    const tagKelas = d.status_lokasi === 'wajar' ? 'wajar' : d.status_lokasi === 'perlu_dicek' ? 'cek' : 'na';
+    const tagTeks = d.status_lokasi === 'wajar' ? 'Wajar' : d.status_lokasi === 'perlu_dicek' ? 'Perlu dicek' : '—';
+    tr.innerHTML = `<td>${i + 1}</td><td>${d.nama}</td><td>${d.kelas || '—'}</td><td>${waktu}</td><td><span class="tag ${tagKelas}">${tagTeks}</span></td>`;
+    tbody.appendChild(tr);
   });
 }
 </script>
