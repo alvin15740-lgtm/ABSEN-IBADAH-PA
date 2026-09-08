@@ -14,7 +14,7 @@ app.use(express.static('public'));
 
    const QR_INTERVAL_MS = 150000;   // ganti QR tiap 2,5 menit
 const QR_BUFFER_MS = 2000;     // toleransi keterlambatan submit dari jamaah
-const JARAK_WAJAR_METER = 150; // radius dianggap "wajar" dari titik lokasi sesi
+const JARAK_WAJAR_METER = 1500; // radius dianggap "wajar" dari titik lokasi sesi
 
 // Timer rotasi QR per sesi aktif: { [sesiId]: intervalHandle }
 const timers = {};
